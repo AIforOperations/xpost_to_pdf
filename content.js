@@ -1,6 +1,7 @@
 // xpost_to_pdf — content script. Injected on toolbar click.
 // Finds the main tweet, hides X clutter, waits for images, reports the rect;
-// later receives the captured PNG and builds the PDF with bundled jsPDF.
+// later receives the captured PNG chunks and assembles them into a paginated
+// PDF with bundled jsPDF, breaking pages between content blocks.
 
 (() => {
   if (window.__xpdfLoaded) return;
@@ -77,7 +78,6 @@
     return {
       ok: true,
       rect,
-      dpr: window.devicePixelRatio || 1,
       handle: findHandle(article),
     };
   }
