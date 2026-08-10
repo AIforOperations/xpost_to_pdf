@@ -61,6 +61,7 @@
     article.scrollIntoView({ block: "center", behavior: "instant" });
     injectHideStyle();
     markClutter(article);
+    markSticky(article);
     await waitForImages(article, 6000);
     await nextFrame();
     await nextFrame();
@@ -103,6 +104,35 @@
         ) || /repl|repost|like|view|bookmark/.test(label);
       if (isActionBar) group.setAttribute("data-xpdf-hide", "1");
     });
+  }
+
+  // Sticky/fixed bars inside the main column ("← Post" / "← Article" headers)
+  // re-anchor to wherever the capture viewport is and get stamped into the
+  // middle of pages. Hide any of them that aren't part of the tweet itself.
+  function markSticky(article) {
+    const root =
+      document.querySelector('[data-testid="primaryColumn"]') ||
+      document.querySelector('main[role="main"]') ||
+      document.body;
+    let level = [root];
+    for (let depth = 0; depth < 6 && level.length; depth++) {
+      const next = [];
+      for (const el of level) {
+        for (const child of el.children) {
+          if (child === article || article.contains(child) || child.contains(article)) {
+            if (child.contains(article) && child !== article) next.push(child);
+            continue;
+          }
+          const pos = getComputedStyle(child).position;
+          if (pos === "sticky" || pos === "fixed") {
+            child.setAttribute("data-xpdf-hide", "1");
+          } else {
+            next.push(child);
+          }
+        }
+      }
+      level = next;
+    }
   }
 
   function findMainTweet(statusId) {

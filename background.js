@@ -34,6 +34,21 @@ async function capturePost(tab, statusId) {
     files: ["lib/jspdf.umd.min.js", "content.js"],
   });
 
+  // Browser zoom breaks Page.captureScreenshot clip coordinates (the clip is
+  // interpreted pre-zoom, so any zoom != 100% crops the capture). Normalize
+  // to 100% for the capture and restore the user's zoom afterwards.
+  let userZoom = 1;
+  try {
+    userZoom = await chrome.tabs.getZoom(tab.id);
+  } catch (e) {
+    // Zoom API unavailable; proceed at current zoom.
+  }
+  const zoomChanged = Math.abs(userZoom - 1) > 0.01;
+  if (zoomChanged) {
+    await chrome.tabs.setZoom(tab.id, 1);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
   // Attach the debugger BEFORE measuring: the "is being debugged" infobar can
   // resize the viewport and shift document coordinates.
   let attached = false;
@@ -119,6 +134,13 @@ async function capturePost(tab, statusId) {
         await chrome.debugger.detach({ tabId: tab.id });
       } catch (e) {
         // Tab may have gone away; nothing to do.
+      }
+    }
+    if (zoomChanged) {
+      try {
+        await chrome.tabs.setZoom(tab.id, userZoom);
+      } catch (e) {
+        // Best effort.
       }
     }
   }
