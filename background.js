@@ -62,9 +62,10 @@ async function capturePost(tab, statusId) {
       mobile: false,
     });
 
+    let chunks;
     try {
       // Let the page re-render at full height, then confirm the rect is
-      // stable (late loads above the post shift the clip). One retry.
+      // stable (late loads above the post shift the clip).
       for (let attempt = 0; attempt < 3; attempt++) {
         const check = await sendToTab(tab.id, { cmd: "remeasure" });
         if (check && check.ok) {
@@ -74,27 +75,44 @@ async function capturePost(tab, statusId) {
         await new Promise((r) => setTimeout(r, 400));
       }
 
-      // Keep the capture under Chrome's texture ceiling (~16k px per side).
-      let scale = prep.dpr || 1;
-      if (prep.rect.height * scale > 16000 || prep.rect.width * scale > 16000) {
-        scale = 1;
+      // Capture in vertical chunks. The rendered surface can be scaled far
+      // beyond devicePixelRatio (display scaling x page zoom), and a single
+      // tall shot past Chrome's ~16384px texture ceiling comes back
+      // truncated. 2000 CSS px per chunk stays safe up to 8x scaling.
+      const CHUNK = 2000;
+      const needsScroll = prep.rect.height + 200 > viewH;
+      chunks = [];
+      let off = 0;
+      while (off < prep.rect.height) {
+        const h = Math.min(CHUNK, prep.rect.height - off);
+        if (needsScroll) {
+          await sendToTab(tab.id, { cmd: "scrollTo", y: prep.rect.y + off - 100 });
+          await new Promise((r) => setTimeout(r, 350));
+          const check = await sendToTab(tab.id, { cmd: "remeasure" });
+          if (check && check.ok) prep.rect = check.rect;
+        }
+        const shotPart = await cdp(tab.id, "Page.captureScreenshot", {
+          format: "png",
+          captureBeyondViewport: true,
+          fromSurface: true,
+          clip: {
+            x: prep.rect.x,
+            y: prep.rect.y + off,
+            width: prep.rect.width,
+            height: h,
+            scale: 1,
+          },
+        });
+        chunks.push({ b64: shotPart.data, offCss: off, hCss: h });
+        off += h;
       }
-
-      shot = await cdp(tab.id, "Page.captureScreenshot", {
-        format: "png",
-        captureBeyondViewport: true,
-        fromSurface: true,
-        clip: {
-          x: prep.rect.x,
-          y: prep.rect.y,
-          width: prep.rect.width,
-          height: prep.rect.height,
-          scale,
-        },
-      });
+      // Page-break geometry must be read while the enlarged viewport is
+      // still active — restoring it below can reflow the article.
+      await sendToTab(tab.id, { cmd: "collectBreaks" });
     } finally {
       await cdp(tab.id, "Emulation.clearDeviceMetricsOverride", {}).catch(() => {});
     }
+    shot = chunks;
   } finally {
     if (attached) {
       try {
@@ -107,7 +125,7 @@ async function capturePost(tab, statusId) {
 
   const pdf = await sendToTab(tab.id, {
     cmd: "makePdf",
-    pngBase64: shot.data,
+    chunks: shot,
     wCss: prep.rect.width,
     hCss: prep.rect.height,
   });

@@ -13,8 +13,8 @@ The output keeps the author, text, media, and timestamp, and hides X clutter: th
 ## Technique
 
 - On click, a content script finds the main tweet (`article[data-testid="tweet"]` matched by the status id permalink), hides UI clutter with an injected stylesheet, scrolls it into view, and waits for every image to finish loading.
-- The background worker attaches the Chrome debugger to the tab and takes a `Page.captureScreenshot` with a clip set to the tweet's exact bounding box (`captureBeyondViewport: true`), so the capture is Chrome's own compositor output — exact fonts, exact images, full resolution, dark or light mode preserved.
-- The content script wraps the PNG in a single custom-sized PDF page via bundled jsPDF, and `chrome.downloads.download({saveAs: true})` shows the save dialog.
+- The background worker attaches the Chrome debugger, temporarily grows the viewport to the post's full height (so X's virtualized feed really renders everything), and captures the post in vertical chunks via `Page.captureScreenshot` — Chrome's own compositor output, so exact fonts, exact images, dark or light mode preserved. Chunking keeps captures under Chrome's 16384px texture ceiling even on scaled/zoomed displays.
+- The content script assembles the chunks into A4-proportioned PDF pages via bundled jsPDF, choosing page breaks between content blocks — a paragraph or image is never split across two pages. `chrome.downloads.download({saveAs: true})` shows the save dialog.
 
 You'll see Chrome's "started debugging this browser" bar for a second during capture — that's the screenshot API, it detaches immediately after.
 
