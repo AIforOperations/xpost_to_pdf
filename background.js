@@ -4,7 +4,7 @@
 // chrome.debugger Page.captureScreenshot -> content builds the PDF (jsPDF) ->
 // downloads.download with saveAs so the user picks location + name.
 
-const STATUS_RE = /^https:\/\/(?:mobile\.)?(?:x|twitter)\.com\/[^/]+\/status\/(\d+)/;
+const STATUS_RE = /^https:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/[^/]+\/status\/(\d+)/;
 
 const busyTabs = new Set();
 
@@ -48,24 +48,53 @@ async function capturePost(tab, statusId) {
       throw new Error((prep && prep.error) || "Could not find the post on this page.");
     }
 
-    // Keep the capture under Chrome's texture ceiling (~16k px per side).
-    let scale = prep.dpr || 1;
-    if (prep.rect.height * scale > 16000 || prep.rect.width * scale > 16000) {
-      scale = 1;
-    }
-
-    shot = await cdp(tab.id, "Page.captureScreenshot", {
-      format: "png",
-      captureBeyondViewport: true,
-      fromSurface: true,
-      clip: {
-        x: prep.rect.x,
-        y: prep.rect.y,
-        width: prep.rect.width,
-        height: prep.rect.height,
-        scale,
-      },
+    // X virtualizes its feed: content rendered outside the viewport gets
+    // recycled, which corrupts captureBeyondViewport shots (duplicated
+    // sections). Instead, temporarily grow the viewport to cover the whole
+    // post so everything really renders, then take a plain clipped shot.
+    const metrics = await cdp(tab.id, "Page.getLayoutMetrics", {});
+    const viewW = Math.ceil(metrics.cssLayoutViewport.clientWidth);
+    const viewH = Math.min(Math.ceil(prep.rect.height) + 200, 8000);
+    await cdp(tab.id, "Emulation.setDeviceMetricsOverride", {
+      width: viewW,
+      height: viewH,
+      deviceScaleFactor: 0,
+      mobile: false,
     });
+
+    try {
+      // Let the page re-render at full height, then confirm the rect is
+      // stable (late loads above the post shift the clip). One retry.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const check = await sendToTab(tab.id, { cmd: "remeasure" });
+        if (check && check.ok) {
+          if (attempt > 0 && rectsClose(check.rect, prep.rect)) break;
+          prep.rect = check.rect;
+        }
+        await new Promise((r) => setTimeout(r, 400));
+      }
+
+      // Keep the capture under Chrome's texture ceiling (~16k px per side).
+      let scale = prep.dpr || 1;
+      if (prep.rect.height * scale > 16000 || prep.rect.width * scale > 16000) {
+        scale = 1;
+      }
+
+      shot = await cdp(tab.id, "Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: true,
+        fromSurface: true,
+        clip: {
+          x: prep.rect.x,
+          y: prep.rect.y,
+          width: prep.rect.width,
+          height: prep.rect.height,
+          scale,
+        },
+      });
+    } finally {
+      await cdp(tab.id, "Emulation.clearDeviceMetricsOverride", {}).catch(() => {});
+    }
   } finally {
     if (attached) {
       try {
@@ -94,12 +123,25 @@ async function capturePost(tab, statusId) {
   });
 }
 
+function rectsClose(a, b) {
+  return (
+    Math.abs(a.x - b.x) <= 2 &&
+    Math.abs(a.y - b.y) <= 2 &&
+    Math.abs(a.width - b.width) <= 2 &&
+    Math.abs(a.height - b.height) <= 2
+  );
+}
+
 function attachDebugger(tabId) {
   return new Promise((resolve, reject) => {
     chrome.debugger.attach({ tabId }, "1.3", () => {
       const err = chrome.runtime.lastError;
-      if (err) reject(new Error(err.message));
-      else resolve();
+      if (err) {
+        const msg = /another debugger/i.test(err.message)
+          ? "DevTools (or another extension) is already attached to this tab. Close it and try again."
+          : err.message;
+        reject(new Error(msg));
+      } else resolve();
     });
   });
 }
