@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "X Post to PDF",
+  "version": "1.0.0",
+  "description": "Save any X (Twitter) post as a pixel-perfect PDF with all images, via a native save dialog.",
+  "action": {
+    "default_title": "Save this X post as PDF"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["activeTab", "scripting", "debugger", "downloads"],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
